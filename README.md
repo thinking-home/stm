@@ -1,6 +1,12 @@
 # stm
 
-Минималистичный state manager для React в духе nanostores.
+Минималистичный state manager для React в духе nanostores. Монорепозиторий на pnpm workspaces.
+
+```
+packages/stm          ядро: store, event, computed, effect, model, Scope
+packages/stm-react    хуки и провайдеры, зависит от stm через workspace:*
+examples/app          Vite + React, чтобы проверять руками
+```
 
 - `store`, `event`, `computed`, `effect`, `model` — описания без состояния. Всё состояние живёт в `Scope`.
 - `effect` — async-функция с событиями `started` / `done` / `failed`, стором `pending`, `AbortSignal` и доступом к `deps` скоупа.
@@ -54,7 +60,7 @@ scope.dispose(todo, '1')          // удалить сейчас: состоян
 ## React
 
 ```tsx
-import { ScopeProvider, ModelProvider, useModel, useStore, useEvent, useRun } from 'stm/react'
+import { ScopeProvider, ModelProvider, useModel, useStore, useEvent, useRun } from 'stm-react'
 
 function Todo() {
   const { toggle, done, save } = useModel(todo)
@@ -77,6 +83,10 @@ function Todo() {
 Ключ задаётся один раз в `ModelProvider`. Экземпляр создаётся при маунте, а после анмаунта удаляется через `unmountDelay` (по умолчанию 1 с, как в nanostores), так что StrictMode и быстрые перемонтирования не пересоздают модель.
 
 ```sh
-npm test        # vitest
-npm run typecheck
+pnpm install
+pnpm test        # vitest по всем пакетам
+pnpm typecheck   # tsc -b по графу project references
+pnpm dev         # examples/app на http://localhost:5173
 ```
+
+Внутренние пакеты не собираются: `exports` указывают на `.ts` исходники, Vite и vitest читают их напрямую. Перед публикацией в npm понадобится сборка (например, tsdown) и замена `exports` на `dist`.

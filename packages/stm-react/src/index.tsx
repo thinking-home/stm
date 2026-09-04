@@ -7,7 +7,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import type { Effect, Event, Model, Params, Readable, Scope } from './core'
+import type { Effect, Event, Model, Params, Readable, Scope } from 'stm'
 
 const ScopeCtx = createContext<Scope | null>(null)
 

@@ -2,8 +2,14 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createScope, effect, event, model, store } from './core'
-import { ModelProvider, ScopeProvider, useEvent, useModel, useRun, useStore } from './react'
+import { createScope, effect, event, model, store } from 'stm'
+import { ModelProvider, ScopeProvider, useEvent, useModel, useRun, useStore } from './index'
+
+declare module 'stm' {
+  interface Deps {
+    api: { load(id: string, signal: AbortSignal): Promise<string> }
+  }
+}
 
 const api = { load: async (id: string) => `user:${id}` }
 const tick = (ms = 0) => new Promise(r => setTimeout(r, ms))
