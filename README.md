@@ -1,0 +1,82 @@
+# stm
+
+Минималистичный state manager для React в духе nanostores.
+
+- `store`, `event`, `computed`, `effect`, `model` — описания без состояния. Всё состояние живёт в `Scope`.
+- `effect` — async-функция с событиями `started` / `done` / `failed`, стором `pending`, `AbortSignal` и доступом к `deps` скоупа.
+- `model` — фабрика набора юнитов по ключу. Экземпляр создаётся при первом обращении, удаляется, когда его больше никто не удерживает.
+
+## Ядро
+
+```ts
+import { createScope, store, event, computed, effect, model } from 'stm'
+
+// зависимости, доступные эффектам
+declare module 'stm' {
+  interface Deps { api: { user(id: string, signal: AbortSignal): Promise<User> } }
+}
+
+const inc = event<number>()
+const reset = event()
+const count = store(0)
+  .on(inc, (s, n) => s + n)
+  .on(reset, () => 0)
+const doubled = computed([count], c => c * 2)
+
+const load = effect(async (id: string, { deps, signal, scope }) => deps.api.user(id, signal))
+const user = store<User | null>(null).on(load.done, (_, { result }) => result)
+
+const scope = createScope({ api })
+scope.emit(inc, 2)
+scope.get(doubled)          // 4
+scope.subscribe(count, v => console.log(v))
+await scope.run(load, '7')  // ctrl.signal третьим аргументом — отмена
+scope.get(load.pending)     // false
+```
+
+Отменённый запуск отклоняется причиной отмены и не эмитит ни `done`, ни `failed`.
+
+## Модели по ключу
+
+```ts
+const todo = model((id: string) => {
+  const toggle = event()
+  const done = store(false).on(toggle, d => !d)
+  const save = effect((_: void, { deps, signal, scope }) => deps.api.save(id, scope.get(done), signal))
+  return { toggle, done, save }
+})
+
+scope.model(todo, '1')            // экземпляр по ключу (get-or-create)
+const release = scope.retain(todo, '1')  // удержать; release → удаление через unmountDelay
+scope.dispose(todo, '1')          // удалить сейчас: состояние, подписки, отмена эффектов
+```
+
+## React
+
+```tsx
+import { ScopeProvider, ModelProvider, useModel, useStore, useEvent, useRun } from 'stm/react'
+
+function Todo() {
+  const { toggle, done, save } = useModel(todo)
+  const isDone = useStore(done)
+  const pending = useStore(save.pending)
+  const onToggle = useEvent(toggle)
+  const run = useRun(save)
+  return <button disabled={pending} onClick={() => { onToggle(); run() }}>{isDone ? '✓' : '·'}</button>
+}
+
+<ScopeProvider value={scope}>
+  {ids.map(id => (
+    <ModelProvider key={id} model={todo} id={id}>
+      <Todo />
+    </ModelProvider>
+  ))}
+</ScopeProvider>
+```
+
+Ключ задаётся один раз в `ModelProvider`. Экземпляр создаётся при маунте, а после анмаунта удаляется через `unmountDelay` (по умолчанию 1 с, как в nanostores), так что StrictMode и быстрые перемонтирования не пересоздают модель.
+
+```sh
+npm test        # vitest
+npm run typecheck
+```
