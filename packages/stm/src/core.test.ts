@@ -10,6 +10,22 @@ declare module './core' {
 const api = { load: async (id: string) => `user:${id}` }
 const tick = (ms = 0) => new Promise(r => setTimeout(r, ms))
 
+const globalReset = event()
+const counter = model((id: string) => {
+  const inc = event()
+  const count = store(0)
+    .on(inc, s => s + 1)
+    .on(globalReset, () => 0)
+  const load = effect((_: void, { deps, signal }) => deps.api.load(id, signal))
+  const label = computed([count], c => `${id}:${c}`)
+  return { inc, count, load, label }
+})
+const app = model(() => {
+  const set = event<string>()
+  const theme = store('light').on(set, (_, t) => t)
+  return { set, theme, form: { name: store('') } }
+})
+
 describe('store + event', () => {
   const inc = event<number>()
   const reset = event()
@@ -117,7 +133,7 @@ describe('effect', () => {
     expect(scope.get(wait.pending)).toBe(false)
   })
 
-  it('отмена: reject с причиной, без done/failed, pending сброшен', async () => {
+  it('отмена: reject с причиной, aborted вместо done/failed, pending сброшен', async () => {
     const load = effect(
       (_: void, { signal }) =>
         new Promise<string>((resolve, reject) => {
@@ -128,96 +144,138 @@ describe('effect', () => {
     const scope = createScope({ api })
     const done = vi.fn()
     const failed = vi.fn()
+    const aborted = vi.fn()
     scope.subscribe(load.done, done)
     scope.subscribe(load.failed, failed)
+    scope.subscribe(load.aborted, aborted)
 
     const ctrl = new AbortController()
     const p = scope.run(load, undefined, ctrl.signal)
-    ctrl.abort(new Error('cancelled'))
+    const reason = new Error('cancelled')
+    ctrl.abort(reason)
     await expect(p).rejects.toThrow('cancelled')
     expect(scope.get(load.pending)).toBe(false)
     expect(done).not.toHaveBeenCalled()
     expect(failed).not.toHaveBeenCalled()
+    expect(aborted).toHaveBeenCalledWith({ params: undefined, reason })
   })
 
   it('отмена, если обработчик игнорирует сигнал: результат отбрасывается', async () => {
     const load = effect(async () => 'ignored')
     const scope = createScope({ api })
     const done = vi.fn()
+    const aborted = vi.fn()
     scope.subscribe(load.done, done)
+    scope.subscribe(load.aborted, aborted)
     const ctrl = new AbortController()
     const p = scope.run(load, undefined, ctrl.signal)
     ctrl.abort()
     await expect(p).rejects.toThrow(/abort/i)
     expect(done).not.toHaveBeenCalled()
+    expect(aborted).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('model', () => {
-  const globalReset = event()
-  const counter = model((id: string) => {
-    const inc = event()
-    const count = store(0)
-      .on(inc, s => s + 1)
-      .on(globalReset, () => 0)
-    const load = effect((_: void, { deps, signal }) => deps.api.load(id, signal))
-    const label = computed([count], c => `${id}:${c}`)
-    return { inc, count, load, label }
-  })
-
-  it('экземпляры по ключу изолированы, один и тот же ключ — один экземпляр', () => {
+  it('адрес = ключ типа + доменный ключ; экземпляры изолированы', () => {
     const scope = createScope({ api })
-    const a = scope.model(counter, 'a')
-    const b = scope.model(counter, 'b')
-    expect(scope.model(counter, 'a')).toBe(a)
+    const a = scope.model(counter, 'counter', 'a')
+    const b = scope.model(counter, 'counter', 'b')
+    const other = scope.model(counter, 'other', 'a') // тот же доменный ключ под другим ключом типа
+    expect(scope.model(counter, 'counter', 'a')).toBe(a)
+    expect(other).not.toBe(a)
     scope.emit(a.inc)
     scope.emit(a.inc)
     scope.emit(b.inc)
     expect(scope.get(a.label)).toBe('a:2')
     expect(scope.get(b.label)).toBe('b:1')
+    expect(scope.get(other.count)).toBe(0)
     scope.emit(globalReset)
     expect(scope.get(a.count)).toBe(0)
     expect(scope.get(b.count)).toBe(0)
   })
 
-  it('retain/release: удаление после unmountDelay, retain отменяет удаление', async () => {
-    const scope = createScope({ api }, 5)
-    const release1 = scope.retain(counter, 'a')
-    const release2 = scope.retain(counter, 'a')
-    const a = scope.model(counter, 'a')
+  it('из одного шаблона можно создать несколько корневых экземпляров', () => {
+    const scope = createScope({ api })
+    const left = scope.model(app, 'left')
+    const right = scope.model(app, 'right')
+    scope.emit(left.set, 'dark')
+    expect(scope.get(left.theme)).toBe('dark')
+    expect(scope.get(right.theme)).toBe('light')
+    expect(scope.modelOf(left)).toBe(app)
+  })
+
+  it('другой шаблон по занятому адресу — ошибка', () => {
+    const scope = createScope({ api })
+    const other = model(() => ({ x: store(1) }))
+    scope.model(app, 'root')
+    expect(() => scope.model(other, 'root')).toThrow(/другого шаблона/)
+  })
+
+  it('claim: один владелец, release с задержкой, повторный claim отменяет удаление', async () => {
+    const scope = createScope({ api }, { unmountDelay: 5 })
+    const release = scope.claim(counter, 'counter', 'a')
+    const a = scope.model(counter, 'counter', 'a')
+    expect(() => scope.claim(counter, 'counter', 'a')).toThrow(/владелец/)
     scope.emit(a.inc)
 
-    release1()
+    release()
+    release() // повторный release ничего не ломает
+    const release2 = scope.claim(counter, 'counter', 'a') // успели вернуться — экземпляр тот же
     await tick(10)
-    expect(scope.model(counter, 'a')).toBe(a) // ещё удерживается
-
-    release2()
-    const release3 = scope.retain(counter, 'a') // успели вернуться — не удаляем
-    await tick(10)
-    expect(scope.model(counter, 'a')).toBe(a)
+    expect(scope.model(counter, 'counter', 'a')).toBe(a)
     expect(scope.get(a.count)).toBe(1)
 
-    release3()
+    release2()
     await tick(10)
-    const fresh = scope.model(counter, 'a')
+    const fresh = scope.model(counter, 'counter', 'a')
     expect(fresh).not.toBe(a)
     expect(scope.get(fresh.count)).toBe(0)
   })
 
   it('dispose: отменяет эффекты, отвязывает редьюсеры от глобальных событий, не пишет в scope', async () => {
     const scope = createScope({ api })
-    const a = scope.model(counter, 'a')
-    const b = scope.model(counter, 'b')
+    const a = scope.model(counter, 'counter', 'a')
+    const b = scope.model(counter, 'counter', 'b')
     const p = scope.run(a.load)
+    const aborts = store(0).on(a.load.aborted, n => n + 1) // глобальный стор слушает событие экземпляра
     expect(scope.get(a.load.pending)).toBe(true)
 
-    scope.dispose(counter, 'a')
+    scope.dispose('counter', 'a')
     await expect(p).rejects.toThrow(/abort/i)
+    expect(scope.get(aborts)).toBe(0) // после удаления экземпляра его события не эмитятся
     expect(globalReset.targets.has(a.count)).toBe(false)
     expect(globalReset.targets.has(b.count)).toBe(true)
     expect(scope.get(a.load.pending)).toBe(false)
     // @ts-expect-error приватное поле, проверяем отсутствие утечки
     expect(scope.values.has(a.load.pending)).toBe(false)
-    expect(scope.model(counter, 'a')).not.toBe(a)
+    expect(scope.model(counter, 'counter', 'a')).not.toBe(a)
+  })
+})
+
+describe('serialize / state', () => {
+  it('serialize отдаёт изменённые сторы по адресам и путям; эффекты и computed не попадают', async () => {
+    const scope = createScope({ api })
+    const a = scope.model(counter, 'counter', 'a')
+    const root = scope.model(app, 'root')
+    scope.model(counter, 'counter', 'b') // без изменений — в JSON не попадает
+    scope.emit(a.inc)
+    await scope.run(a.load) // pending менялся, но это стор эффекта
+    scope.emit(root.set, 'dark')
+    scope.set(root.form.name, 'Ann')
+    expect(scope.serialize()).toEqual({
+      counter: { a: { count: 1 } },
+      root: { '': { theme: 'dark', 'form.name': 'Ann' } },
+    })
+  })
+
+  it('state применяется при создании экземпляра; незнакомые пути игнорируются', () => {
+    const state = { counter: { a: { count: 5, ghost: 1 } }, root: { '': { theme: 'dark' } } }
+    const scope = createScope({ api }, { state })
+    const a = scope.model(counter, 'counter', 'a')
+    expect(scope.get(a.count)).toBe(5)
+    expect(scope.get(a.label)).toBe('a:5')
+    expect(scope.get(scope.model(counter, 'counter', 'b').count)).toBe(0)
+    expect(scope.get(scope.model(app, 'root').theme)).toBe('dark')
   })
 })

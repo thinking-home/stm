@@ -1,14 +1,33 @@
-import { useRef, useState } from 'react'
-import { ModelProvider, useEvent, useModel, useRun, useStore } from 'stm-react'
-import { user } from './models'
+import { useRef } from 'react'
+import { ModelProvider, useCreateLocalModel, useCreateModel, useEvent, useModel, useRun, useStore } from 'stm-react'
+import { app, details, user } from './models'
 
-function UserCard({ onRemove }: { onRemove: () => void }) {
+// потребитель: экземпляр user пришёл из провайдера владельца
+function UserTitle() {
   const m = useModel(user)
   const title = useStore(m.title)
   const pending = useStore(m.load.pending)
-  const error = useStore(m.error)
+  const status = useStore(m.status)
+  return (
+    <>
+      <h3>{title}</h3>
+      <p>{pending ? 'Загрузка…' : status}</p>
+    </>
+  )
+}
+
+// владелец экземпляра user/id и локального экземпляра details
+function UserCard({ id }: { id: string }) {
+  const m = useCreateModel(user, 'user', id)
+  const ui = useCreateLocalModel(details)
+  const { remove } = useModel(app)
+
+  const pending = useStore(m.load.pending)
+  const open = useStore(ui.open)
   const run = useRun(m.load)
   const like = useEvent(m.like)
+  const toggle = useEvent(ui.toggle)
+  const onRemove = useEvent(remove)
   const ctrl = useRef<AbortController | null>(null)
 
   const load = () => {
@@ -19,40 +38,38 @@ function UserCard({ onRemove }: { onRemove: () => void }) {
 
   return (
     <div className="card">
-      <h3>{title}</h3>
-      <p>{pending ? 'Загрузка…' : error ? `Ошибка: ${error}` : ''}</p>
+      <ModelProvider value={m}>
+        <UserTitle />
+      </ModelProvider>
       <button onClick={load} disabled={pending}>Загрузить</button>
       <button onClick={() => ctrl.current?.abort()} disabled={!pending}>Отменить</button>
       <button onClick={() => like()}>❤</button>
-      <button onClick={onRemove}>Удалить</button>
+      <button onClick={() => onRemove(id)}>Удалить</button>
+      <button onClick={() => toggle()}>{open ? 'Скрыть' : 'Подробнее'}</button>
+      {open && <p>Адрес экземпляра: user/{id}. Этот блок открыт локальной моделью с ключом из useId.</p>}
     </div>
   )
 }
 
 export function App() {
-  const [ids, setIds] = useState(['1', '2'])
-  const [next, setNext] = useState(3)
-  const [twice, setTwice] = useState(false)
-  const shown = twice ? [...ids, ids[0]] : ids
-
+  const root = useCreateModel(app, 'root')
+  const ids = useStore(root.ids)
+  const add = useEvent(root.add)
   return (
-    <main>
-      <h1>stm · модели по ключу</h1>
-      <button onClick={() => (setIds([...ids, String(next)]), setNext(next + 1))}>Добавить карточку</button>
-      <label>
-        <input type="checkbox" checked={twice} onChange={e => setTwice(e.target.checked)} /> показать первую карточку дважды
-      </label>
-      <div className="cards">
-        {shown.map((id, i) => (
-          <ModelProvider key={`${id}-${i}`} model={user} id={id}>
-            <UserCard onRemove={() => setIds(ids.filter(x => x !== id))} />
-          </ModelProvider>
-        ))}
-      </div>
-      <p>
-        Две карточки с одним ключом делят состояние. Удалённая карточка через секунду теряет состояние, а её незавершённая
-        загрузка отменяется.
-      </p>
-    </main>
+    <ModelProvider value={root}>
+      <main>
+        <h1>stm · модели по ключу</h1>
+        <button onClick={() => add()}>Добавить карточку</button>
+        <div className="cards">
+          {ids.map(id => (
+            <UserCard key={id} id={id} />
+          ))}
+        </div>
+        <p>
+          Карточка владеет экземпляром user/id и отдаёт его заголовку через провайдер. Удалённая карточка через секунду
+          теряет состояние, а её незавершённая загрузка отменяется.
+        </p>
+      </main>
+    </ModelProvider>
   )
 }

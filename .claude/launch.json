@@ -1,6 +1,0 @@
-{
-  "version": "0.0.1",
-  "configurations": [
-    { "name": "app", "runtimeExecutable": "pnpm", "runtimeArgs": ["--filter", "app", "dev"], "port": 5173 }
-  ]
-}

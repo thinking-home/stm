@@ -37,14 +37,16 @@ export interface Effect<P = void, R = void> {
   readonly started: Event<P>
   readonly done: Event<{ params: P; result: R }>
   readonly failed: Event<{ params: P; error: unknown }>
+  readonly aborted: Event<{ params: P; reason: unknown }>
   readonly pending: Store<boolean>
 }
 
-export interface Model<K, T> {
+/** шаблон модели: фабрика без имени и без состояния */
+export interface Model<K = void, T extends object = object> {
   readonly create: (key: K) => T
 }
 
-/** для `void` аргумент можно не передавать: `scope.emit(reset)`, `scope.run(load)` */
+/** для `void` аргумент можно не передавать: `scope.emit(reset)`, `scope.run(load)`, `scope.model(app, 'root')` */
 export type Params<P> = P extends void ? [params?: P] : [params: P]
 
 type Unit = Store<any> | Computed<any> | Event<any> | Effect<any, any>
@@ -75,15 +77,46 @@ export const computed = <S extends readonly Readable<any>[], T>(
 ): Computed<T> => track({ stores, fn })
 
 export const effect = <P = void, R = void>(handler: Effect<P, R>['handler']): Effect<P, R> =>
-  track<Effect<P, R>>({ handler, started: event(), done: event(), failed: event(), pending: store(false) })
+  track<Effect<P, R>>({
+    handler,
+    started: event(),
+    done: event(),
+    failed: event(),
+    aborted: event(),
+    pending: store(false),
+  })
 
-export const model = <K, T>(create: (key: K) => T): Model<K, T> => ({ create })
+export const model = <K = void, T extends object = object>(create: (key: K) => T): Model<K, T> => ({ create })
+
+/** состояние скоупа: ключ типа → доменный ключ ('' если его нет) → путь стора в экземпляре → значение */
+export type ScopeState = Record<string, Record<string, Record<string, unknown>>>
+
+export interface ScopeOptions {
+  /** сколько ждать после release владельца перед удалением экземпляра */
+  unmountDelay?: number
+  /** результат `serialize()`; применяется к экземплярам в момент их создания */
+  state?: ScopeState
+}
 
 interface Instance {
-  inst: unknown
+  model: Model<any, any>
+  inst: object
   units: Set<Unit>
-  refs: number
+  owner?: object
   timer?: ReturnType<typeof setTimeout>
+}
+
+const addr = (type: string, key: unknown) => (key === undefined ? type : `${type}/${String(key)}`)
+const keyOf = (key: unknown) => (key === undefined ? '' : String(key))
+
+/** обходит объект экземпляра и вызывает fn для каждого стора с его путём вида `form.name` */
+const walk = (obj: object, fn: (store: Store<any>, path: string) => void, prefix = ''): void => {
+  for (const [name, v] of Object.entries(obj)) {
+    if (!v || typeof v !== 'object') continue
+    if ('reducers' in v) fn(v as Store<any>, prefix + name)
+    else if (!('targets' in v || 'fn' in v || 'handler' in v) && Object.getPrototypeOf(v) === Object.prototype)
+      walk(v, fn, prefix + name + '.')
+  }
 }
 
 export class Scope {
@@ -91,13 +124,18 @@ export class Scope {
   private cache = new Map<Computed<any>, [unknown[], unknown]>()
   private listeners = new Map<Unit, Set<(value: any) => void>>()
   private running = new Map<Effect<any, any>, Set<AbortController>>()
-  private instances = new Map<Model<any, any>, Map<unknown, Instance>>()
+  private instances = new Map<string, Map<unknown, Instance>>()
+  private owners = new WeakMap<object, Model<any, any>>()
+  private state: ScopeState
+  readonly unmountDelay: number
 
   constructor(
     readonly deps: Deps,
-    /** сколько ждать после последнего release перед удалением экземпляра модели */
-    readonly unmountDelay = 1000,
-  ) {}
+    { unmountDelay = 1000, state = {} }: ScopeOptions = {},
+  ) {
+    this.unmountDelay = unmountDelay
+    this.state = state
+  }
 
   get<T>(unit: Readable<T>): T {
     if (!('fn' in unit)) return this.values.has(unit) ? (this.values.get(unit) as T) : unit.initial
@@ -148,47 +186,56 @@ export class Scope {
     this.set(fx.pending, true)
     this.emit(fx.started, ...([params] as Params<P>))
 
-    const settle = () => {
+    // на один запуск срабатывает ровно одно из done / failed / aborted
+    const finish = (ok: boolean, value: unknown): R => {
       running.delete(ctrl)
-      // если экземпляр модели уже удалён, его сторы не трогаем
-      if (this.running.get(fx) === running) this.set(fx.pending, running.size > 0)
+      const alive = this.running.get(fx) === running // экземпляр модели не удалён
+      if (alive) this.set(fx.pending, running.size > 0)
+      if (ctrl.signal.aborted) {
+        if (alive) this.emit(fx.aborted, { params, reason: ctrl.signal.reason })
+        throw ctrl.signal.reason
+      }
+      if (!ok) {
+        this.emit(fx.failed, { params, error: value })
+        throw value
+      }
+      this.emit(fx.done, { params, result: value as R })
+      return value as R
     }
     return new Promise<R>(resolve =>
       resolve(fx.handler(params, { deps: this.deps, signal: ctrl.signal, scope: this })),
     ).then(
-      result => {
-        settle()
-        if (ctrl.signal.aborted) throw ctrl.signal.reason
-        this.emit(fx.done, { params, result })
-        return result
-      },
-      error => {
-        settle()
-        if (ctrl.signal.aborted) throw ctrl.signal.reason
-        this.emit(fx.failed, { params, error })
-        throw error
-      },
+      result => finish(true, result),
+      error => finish(false, error),
     )
   }
 
-  /** экземпляр модели по ключу; создаётся при первом обращении */
-  model<K, T>(model: Model<K, T>, key: K): T {
-    return this.instance(model, key).inst as T
+  /** экземпляр по адресу «ключ типа + доменный ключ»; создаётся при первом обращении */
+  model<K, T extends object>(model: Model<K, T>, type: string, ...[key]: Params<K>): T {
+    return this.instance(model, type, key).inst as T
   }
 
-  /** удерживает экземпляр; возвращает release, после последнего release экземпляр удалится через unmountDelay */
-  retain<K>(model: Model<K, any>, key: K): () => void {
-    const e = this.instance(model, key)
-    e.refs++
+  /** стать владельцем экземпляра; второй владелец — ошибка. После release экземпляр удалится через unmountDelay */
+  claim<K>(model: Model<K, any>, type: string, ...[key]: Params<K>): () => void {
+    const e = this.instance(model, type, key)
+    if (e.owner) throw new Error(`stm: у экземпляра ${addr(type, key)} уже есть владелец`)
+    const owner = (e.owner = {})
     clearTimeout(e.timer)
     return () => {
-      if (--e.refs === 0) e.timer = setTimeout(() => this.dispose(model, key), this.unmountDelay)
+      if (e.owner !== owner) return
+      e.owner = undefined
+      e.timer = setTimeout(() => this.dispose(type, key), this.unmountDelay)
     }
   }
 
+  /** шаблон, из которого создан экземпляр */
+  modelOf(inst: object): Model<any, any> | undefined {
+    return this.owners.get(inst)
+  }
+
   /** немедленно удаляет экземпляр: состояние, подписки, отменяет его запущенные эффекты */
-  dispose<K>(model: Model<K, any>, key: K): void {
-    const byKey = this.instances.get(model)
+  dispose(type: string, key?: unknown): void {
+    const byKey = this.instances.get(type)
     const e = byKey?.get(key)
     if (!e) return
     byKey!.delete(key)
@@ -208,22 +255,44 @@ export class Scope {
     }
   }
 
-  private instance<K>(model: Model<K, any>, key: K): Instance {
-    let byKey = this.instances.get(model)
-    if (!byKey) this.instances.set(model, (byKey = new Map()))
-    let e = byKey.get(key)
-    if (!e) {
-      const units = new Set<Unit>()
-      const prev = collecting
-      collecting = units
-      try {
-        byKey.set(key, (e = { inst: model.create(key), units, refs: 0 }))
-      } finally {
-        collecting = prev
+  /** изменённые сторы всех экземпляров; эффекты, события и computed не попадают */
+  serialize(): ScopeState {
+    const out: ScopeState = {}
+    for (const [type, byKey] of this.instances)
+      for (const [key, e] of byKey) {
+        const values: Record<string, unknown> = {}
+        walk(e.inst, (s, path) => {
+          if (this.values.has(s)) values[path] = this.values.get(s)
+        })
+        if (Object.keys(values).length) (out[type] ??= {})[keyOf(key)] = values
       }
+    return out
+  }
+
+  private instance(model: Model<any, any>, type: string, key: unknown): Instance {
+    let byKey = this.instances.get(type)
+    if (!byKey) this.instances.set(type, (byKey = new Map()))
+    const found = byKey.get(key)
+    if (found) {
+      if (found.model !== model) throw new Error(`stm: адрес ${addr(type, key)} занят экземпляром другого шаблона`)
+      return found
     }
+    const units = new Set<Unit>()
+    const prev = collecting
+    collecting = units
+    let inst: object
+    try {
+      inst = model.create(key)
+    } finally {
+      collecting = prev
+    }
+    const saved = this.state[type]?.[keyOf(key)]
+    if (saved) walk(inst, (s, path) => path in saved && this.set(s, saved[path]))
+    const e: Instance = { model, inst, units }
+    byKey.set(key, e)
+    this.owners.set(inst, model)
     return e
   }
 }
 
-export const createScope = (deps: Deps, unmountDelay?: number): Scope => new Scope(deps, unmountDelay)
+export const createScope = (deps: Deps, options?: ScopeOptions): Scope => new Scope(deps, options)

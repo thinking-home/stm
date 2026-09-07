@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useSyncExternalStore,
   type ReactNode,
@@ -38,19 +39,34 @@ export function useRun<P, R>(fx: Effect<P, R>): (...args: RunArgs<P>) => Promise
   return useCallback((...args: RunArgs<P>) => scope.run(fx, ...args), [scope, fx])
 }
 
-const ModelCtx = createContext<ReadonlyMap<Model<any, any>, unknown>>(new Map())
-
-export function ModelProvider<K, T>({ model, id, children }: { model: Model<K, T>; id: K; children?: ReactNode }) {
+/** создаёт экземпляр по адресу «ключ типа + доменный ключ» и владеет им, пока компонент смонтирован */
+export function useCreateModel<K, T extends object>(model: Model<K, T>, type: string, ...key: Params<K>): T {
   const scope = useScope()
-  const parent = useContext(ModelCtx)
-  const inst = scope.model(model, id)
-  const value = useMemo(() => new Map(parent).set(model, inst), [parent, model, inst])
-  useEffect(() => scope.retain(model, id), [scope, model, id])
-  return <ModelCtx.Provider value={value}>{children}</ModelCtx.Provider>
+  const inst = scope.model(model, type, ...key)
+  useEffect(() => scope.claim(model, type, ...key), [scope, model, type, key[0]])
+  return inst
 }
 
-export function useModel<T>(model: Model<any, T>): T {
+/** то же, но ключ типа берётся из useId: приватный экземпляр этого компонента */
+export function useCreateLocalModel<K, T extends object>(model: Model<K, T>, ...key: Params<K>): T {
+  return useCreateModel(model, useId(), ...key)
+}
+
+const ModelCtx = createContext<ReadonlyMap<Model<any, any>, object>>(new Map())
+
+/** отдаёт экземпляр вниз по дереву; ничего не создаёт и не удерживает */
+export function ModelProvider({ value, children }: { value: object; children?: ReactNode }) {
+  const scope = useScope()
+  const parent = useContext(ModelCtx)
+  const model = scope.modelOf(value)
+  if (!model) throw new Error('stm: в ModelProvider передан не экземпляр модели этого скоупа')
+  const ctx = useMemo(() => new Map(parent).set(model, value), [parent, model, value])
+  return <ModelCtx.Provider value={ctx}>{children}</ModelCtx.Provider>
+}
+
+/** экземпляр, который положил в ModelProvider кто-то выше по дереву */
+export function useModel<T extends object>(model: Model<any, T>): T {
   const inst = useContext(ModelCtx).get(model)
-  if (inst === undefined) throw new Error('stm: нет <ModelProvider> для этой модели')
+  if (!inst) throw new Error('stm: нет <ModelProvider> с экземпляром этой модели')
   return inst as T
 }

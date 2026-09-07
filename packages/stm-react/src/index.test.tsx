@@ -3,7 +3,16 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createScope, effect, event, model, store } from 'stm'
-import { ModelProvider, ScopeProvider, useEvent, useModel, useRun, useStore } from './index'
+import {
+  ModelProvider,
+  ScopeProvider,
+  useCreateLocalModel,
+  useCreateModel,
+  useEvent,
+  useModel,
+  useRun,
+  useStore,
+} from './index'
 
 declare module 'stm' {
   interface Deps {
@@ -22,6 +31,13 @@ const counter = model((id: string) => {
   return { inc, count, load, user }
 })
 
+const toggle = model(() => {
+  const flip = event()
+  const on = store(false).on(flip, v => !v)
+  return { flip, on }
+})
+
+// потребитель: экземпляр приходит из провайдера владельца
 function Counter() {
   const { inc, count, load, user } = useModel(counter)
   const value = useStore(count)
@@ -39,20 +55,33 @@ function Counter() {
   )
 }
 
+// владелец: создаёт экземпляр counter/id и локальный экземпляр toggle
+function Card({ id }: { id: string }) {
+  const m = useCreateModel(counter, 'counter', id)
+  const ui = useCreateLocalModel(toggle)
+  const on = useStore(ui.on)
+  const flip = useEvent(ui.flip)
+  return (
+    <section data-testid={id}>
+      <ModelProvider value={m}>
+        <Counter />
+      </ModelProvider>
+      <button onClick={() => flip()}>toggle</button>
+      <span data-testid="on">{String(on)}</span>
+    </section>
+  )
+}
+
 afterEach(cleanup)
 
 describe('react', () => {
-  it('ключ задаётся в провайдере, экземпляры независимы, состояние живёт в scope', async () => {
-    const scope = createScope({ api }, 5)
+  it('владелец создаёт экземпляр, потребитель берёт его из провайдера, состояние живёт в scope', async () => {
+    const scope = createScope({ api }, { unmountDelay: 5 })
     const App = ({ ids }: { ids: string[] }) => (
       <StrictMode>
         <ScopeProvider value={scope}>
           {ids.map(id => (
-            <section key={id} data-testid={id}>
-              <ModelProvider model={counter} id={id}>
-                <Counter />
-              </ModelProvider>
-            </section>
+            <Card key={id} id={id} />
           ))}
         </ScopeProvider>
       </StrictMode>
@@ -66,47 +95,51 @@ describe('react', () => {
     fireEvent.click(button('a', '+'))
     fireEvent.click(button('a', '+'))
     fireEvent.click(button('b', '+'))
+    fireEvent.click(button('a', 'toggle'))
     expect(within('a', 'value').textContent).toBe('2')
     expect(within('b', 'value').textContent).toBe('1')
-    expect(scope.get(scope.model(counter, 'a').count)).toBe(2)
+    expect(within('a', 'on').textContent).toBe('true')
+    expect(within('b', 'on').textContent).toBe('false')
+    expect(scope.get(scope.model(counter, 'counter', 'a').count)).toBe(2)
 
     fireEvent.click(button('a', 'load'))
     expect(within('a', 'user').textContent).toBe('…')
     await act(() => tick())
     expect(within('a', 'user').textContent).toBe('user:a')
 
-    // размонтировали "a": через unmountDelay экземпляр удалён, при повторном монтировании — чистый
+    // размонтировали "a": через unmountDelay экземпляры удалены, при повторном монтировании — чистые
     rerender(<App ids={['b']} />)
     await act(() => tick(10))
     rerender(<App ids={['a', 'b']} />)
     expect(within('a', 'value').textContent).toBe('0')
+    expect(within('a', 'on').textContent).toBe('false')
     expect(within('b', 'value').textContent).toBe('1')
   })
 
-  it('размонтирование отменяет запущенный эффект экземпляра', async () => {
+  it('размонтирование владельца отменяет запущенный эффект экземпляра', async () => {
     let aborted = false
     const slow = model((id: string) => ({
       load: effect(
         (_: void, { signal }) =>
-          new Promise<string>((_, reject) => signal.addEventListener('abort', () => ((aborted = true), reject(signal.reason)))),
+          new Promise<string>((_, reject) =>
+            signal.addEventListener('abort', () => ((aborted = true), reject(signal.reason))),
+          ),
       ),
       id,
     }))
     const Runner = () => {
-      const { load } = useModel(slow)
+      const { load } = useCreateModel(slow, 'slow', 'x')
       const run = useRun(load)
       return <button onClick={() => void run().catch(() => {})}>go</button>
     }
-    const scope = createScope({ api }, 5)
+    const scope = createScope({ api }, { unmountDelay: 5 })
     const { unmount } = render(
       <ScopeProvider value={scope}>
-        <ModelProvider model={slow} id="x">
-          <Runner />
-        </ModelProvider>
+        <Runner />
       </ScopeProvider>,
     )
     fireEvent.click(screen.getByText('go'))
-    expect(scope.get(scope.model(slow, 'x').load.pending)).toBe(true)
+    expect(scope.get(scope.model(slow, 'slow', 'x').load.pending)).toBe(true)
     unmount()
     await tick(10)
     expect(aborted).toBe(true)

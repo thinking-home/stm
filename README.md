@@ -9,8 +9,8 @@ examples/app          Vite + React, чтобы проверять руками
 ```
 
 - `store`, `event`, `computed`, `effect`, `model` — описания без состояния. Всё состояние живёт в `Scope`.
-- `effect` — async-функция с событиями `started` / `done` / `failed`, стором `pending`, `AbortSignal` и доступом к `deps` скоупа.
-- `model` — фабрика набора юнитов по ключу. Экземпляр создаётся при первом обращении, удаляется, когда его больше никто не удерживает.
+- `effect` — async-функция с событиями `started` / `done` / `failed` / `aborted`, стором `pending`, `AbortSignal` и доступом к `deps` скоупа.
+- `model` — шаблон набора юнитов. Экземпляр адресуется ключом типа и доменным ключом, живёт, пока у него есть владелец, и умеет сериализоваться.
 
 ## Ядро
 
@@ -40,9 +40,11 @@ await scope.run(load, '7')  // ctrl.signal третьим аргументом �
 scope.get(load.pending)     // false
 ```
 
-Отменённый запуск отклоняется причиной отмены и не эмитит ни `done`, ни `failed`.
+Отменённый запуск отклоняется причиной отмены и эмитит `aborted` с `{ params, reason }` вместо `done` или `failed`. События срабатывают в момент завершения обработчика, `pending` обновляется прямо перед ними.
 
 ## Модели по ключу
+
+Подробнее про модели, экземпляры и их жизненный цикл: [docs/MODEL.md](docs/MODEL.md).
 
 ```ts
 const todo = model((id: string) => {
@@ -52,18 +54,27 @@ const todo = model((id: string) => {
   return { toggle, done, save }
 })
 
-scope.model(todo, '1')            // экземпляр по ключу (get-or-create)
-const release = scope.retain(todo, '1')  // удержать; release → удаление через unmountDelay
-scope.dispose(todo, '1')          // удалить сейчас: состояние, подписки, отмена эффектов
+scope.model(todo, 'todo', '1')                   // экземпляр по адресу todo/1 (get-or-create)
+const release = scope.claim(todo, 'todo', '1')   // стать владельцем; второй владелец → ошибка
+release()                                        // удалится через unmountDelay
+scope.dispose('todo', '1')                       // удалить сразу
+
+const state = scope.serialize()                  // { todo: { '1': { done: true } } }
+createScope(deps, { state })                     // гидрация: значения применяются при создании экземпляров
 ```
 
 ## React
 
 ```tsx
-import { ScopeProvider, ModelProvider, useModel, useStore, useEvent, useRun } from 'stm-react'
+import { ScopeProvider, ModelProvider, useCreateModel, useCreateLocalModel, useModel, useStore, useEvent, useRun } from 'stm-react'
+
+function TodoPage({ id }: { id: string }) {
+  const m = useCreateModel(todo, 'todo', id)     // владелец: создаёт экземпляр и держит, пока смонтирован
+  return <ModelProvider value={m}><Todo /></ModelProvider>
+}
 
 function Todo() {
-  const { toggle, done, save } = useModel(todo)
+  const { toggle, done, save } = useModel(todo)  // потребитель: экземпляр из провайдера выше
   const isDone = useStore(done)
   const pending = useStore(save.pending)
   const onToggle = useEvent(toggle)
@@ -71,16 +82,14 @@ function Todo() {
   return <button disabled={pending} onClick={() => { onToggle(); run() }}>{isDone ? '✓' : '·'}</button>
 }
 
+const ui = useCreateLocalModel(details)          // приватный экземпляр компонента, ключ типа из useId
+
 <ScopeProvider value={scope}>
-  {ids.map(id => (
-    <ModelProvider key={id} model={todo} id={id}>
-      <Todo />
-    </ModelProvider>
-  ))}
+  <TodoPage id="1" />
 </ScopeProvider>
 ```
 
-Ключ задаётся один раз в `ModelProvider`. Экземпляр создаётся при маунте, а после анмаунта удаляется через `unmountDelay` (по умолчанию 1 с, как в nanostores), так что StrictMode и быстрые перемонтирования не пересоздают модель.
+Экземпляр создаёт ровно один компонент. После его размонтирования экземпляр удаляется через `unmountDelay` (по умолчанию 1 с, как в nanostores), так что StrictMode и быстрые перемонтирования не пересоздают модель.
 
 ```sh
 pnpm install
