@@ -23,9 +23,6 @@ export type Readable<T> = Store<T> | Computed<T>
 /** для `void` аргумент можно не передавать: `emit(reset)`, `run(load)`, `scope.model(app, 'root')` */
 export type Params<P> = P extends void ? [params?: P] : [params: P]
 
-/** доменный ключ в адресе экземпляра */
-export type Key = string | number
-
 type RunArgs<P> = [...Params<P>, signal?: AbortSignal]
 
 /** методы, общие для контекста модели и контекста эффекта */
@@ -103,8 +100,8 @@ export const model = <P = void, T extends object = object>(create: (params: P, c
   create,
 })
 
-/** состояние скоупа: ключ типа → доменный ключ ('' если его нет) → путь стора в экземпляре → значение */
-export type ScopeState = Record<string, Record<string, Record<string, unknown>>>
+/** состояние скоупа: адрес экземпляра → путь стора в экземпляре → значение */
+export type ScopeState = Record<string, Record<string, unknown>>
 
 export interface ScopeOptions {
   /** сколько ждать после release владельца перед удалением экземпляра */
@@ -121,12 +118,6 @@ interface Instance {
   owner?: object
   timer?: ReturnType<typeof setTimeout>
 }
-
-/** ключ адреса: явный, иначе примитивные params */
-const addressKey = (params: unknown, key?: Key): Key | undefined =>
-  key ?? (typeof params === 'string' || typeof params === 'number' ? params : undefined)
-const addr = (type: string, key: Key | undefined) => (key === undefined ? type : `${type}/${key}`)
-const keyOf = (key: Key | undefined) => (key === undefined ? '' : String(key))
 
 /** обходит объект экземпляра и вызывает fn для каждого стора с его путём вида `form.name` */
 const walk = (
@@ -148,7 +139,7 @@ export class Scope {
   private cache = new Map<Computed<any>, [unknown[], unknown]>()
   private listeners = new Map<Unit, Set<(value: any) => void>>()
   private running = new Map<Effect<any, any>, Set<AbortController>>()
-  private instances = new Map<string, Map<Key | undefined, Instance>>()
+  private instances = new Map<string, Instance>()
   private owners = new WeakMap<object, Model<any, any>>()
   private state: ScopeState
   private api: Ctx
@@ -241,24 +232,21 @@ export class Scope {
     )
   }
 
-  /** экземпляр по адресу «ключ типа + доменный ключ»; создаётся при первом обращении, params действуют только при создании */
-  model<P, T extends object>(model: Model<P, T>, type: string, ...args: [...Params<P>, key?: Key]): T {
-    const [params, key] = args as unknown as [P, Key?]
-    return this.instance(model, type, params, addressKey(params, key)).inst as T
+  /** экземпляр по адресу; создаётся при первом обращении, params действуют только при создании */
+  model<P, T extends object>(model: Model<P, T>, key: string, ...[params]: Params<P>): T {
+    return this.instance(model, key, params).inst as T
   }
 
   /** стать владельцем экземпляра; второй владелец — ошибка. После release экземпляр удалится через unmountDelay */
-  claim<P>(model: Model<P, any>, type: string, ...args: [...Params<P>, key?: Key]): () => void {
-    const [params, rawKey] = args as unknown as [P, Key?]
-    const key = addressKey(params, rawKey)
-    const e = this.instance(model, type, params, key)
-    if (e.owner) throw new Error(`stm: у экземпляра ${addr(type, key)} уже есть владелец`)
+  claim<P>(model: Model<P, any>, key: string, ...[params]: Params<P>): () => void {
+    const e = this.instance(model, key, params)
+    if (e.owner) throw new Error(`stm: у экземпляра ${key} уже есть владелец`)
     const owner = (e.owner = {})
     clearTimeout(e.timer)
     return () => {
       if (e.owner !== owner) return
       e.owner = undefined
-      e.timer = setTimeout(() => this.dispose(type, key), this.unmountDelay)
+      e.timer = setTimeout(() => this.dispose(key), this.unmountDelay)
     }
   }
 
@@ -268,11 +256,10 @@ export class Scope {
   }
 
   /** немедленно удаляет экземпляр: состояние, подписки, отменяет его запущенные эффекты */
-  dispose(type: string, key?: Key): void {
-    const byKey = this.instances.get(type)
-    const e = byKey?.get(key)
+  dispose(key: string): void {
+    const e = this.instances.get(key)
     if (!e) return
-    byKey!.delete(key)
+    this.instances.delete(key)
     clearTimeout(e.timer)
     e.unsubs.forEach(off => off())
     for (const u of e.units) {
@@ -290,27 +277,24 @@ export class Scope {
   /** изменённые сторы всех экземпляров; эффекты, события, computed и вложенные экземпляры не попадают */
   serialize(): ScopeState {
     const out: ScopeState = {}
-    for (const [type, byKey] of this.instances)
-      for (const [key, e] of byKey) {
-        const values: Record<string, unknown> = {}
-        walk(
-          e.inst,
-          (s, path) => {
-            if (this.values.has(s)) values[path] = this.values.get(s)
-          },
-          v => this.owners.has(v),
-        )
-        if (Object.keys(values).length) (out[type] ??= {})[keyOf(key)] = values
-      }
+    for (const [key, e] of this.instances) {
+      const values: Record<string, unknown> = {}
+      walk(
+        e.inst,
+        (s, path) => {
+          if (this.values.has(s)) values[path] = this.values.get(s)
+        },
+        v => this.owners.has(v),
+      )
+      if (Object.keys(values).length) out[key] = values
+    }
     return out
   }
 
-  private instance(model: Model<any, any>, type: string, params: unknown, key: Key | undefined): Instance {
-    let byKey = this.instances.get(type)
-    if (!byKey) this.instances.set(type, (byKey = new Map()))
-    const found = byKey.get(key)
+  private instance(model: Model<any, any>, key: string, params: unknown): Instance {
+    const found = this.instances.get(key)
     if (found) {
-      if (found.model !== model) throw new Error(`stm: адрес ${addr(type, key)} занят экземпляром другого шаблона`)
+      if (found.model !== model) throw new Error(`stm: адрес ${key} занят экземпляром другого шаблона`)
       return found
     }
     const units = new Set<Unit>()
@@ -332,7 +316,7 @@ export class Scope {
       collecting = prev
     }
     // сохранённое состояние применяется без уведомления слушателей: это инициализация, а не изменение
-    const saved = this.state[type]?.[keyOf(key)]
+    const saved = this.state[key]
     if (saved)
       walk(
         inst,
@@ -342,7 +326,7 @@ export class Scope {
         v => this.owners.has(v),
       )
     const e: Instance = { model, inst, units, unsubs }
-    byKey.set(key, e)
+    this.instances.set(key, e)
     this.owners.set(inst, model)
     return e
   }

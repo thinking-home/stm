@@ -60,7 +60,7 @@ function Counter() {
 
 // владелец: создаёт экземпляр counter/id и локальный экземпляр toggle с params
 function Card({ id }: { id: string }) {
-  const m = useCreateModel(counter, 'counter', id)
+  const m = useCreateModel(counter, `counter/${id}`, id)
   const ui = useCreateLocalModel(toggle, { initial: false })
   const on = useStore(ui.on)
   const flip = useEvent(ui.flip)
@@ -103,7 +103,7 @@ describe('react', () => {
     expect(within('b', 'value').textContent).toBe('1')
     expect(within('a', 'on').textContent).toBe('true')
     expect(within('b', 'on').textContent).toBe('false')
-    expect(scope.get(scope.model(counter, 'counter', 'a').count)).toBe(2)
+    expect(scope.get(scope.model(counter, 'counter/a', 'a').count)).toBe(2)
 
     fireEvent.click(button('a', 'load'))
     expect(within('a', 'user').textContent).toBe('…')
@@ -131,7 +131,7 @@ describe('react', () => {
       id,
     }))
     const Runner = () => {
-      const { load } = useCreateModel(slow, 'slow', 'x')
+      const { load } = useCreateModel(slow, 'slow/x', 'x')
       const run = useRun(load)
       return <button onClick={() => void run().catch(() => {})}>go</button>
     }
@@ -142,7 +142,7 @@ describe('react', () => {
       </ScopeProvider>,
     )
     fireEvent.click(screen.getByText('go'))
-    expect(scope.get(scope.model(slow, 'slow', 'x').load.pending)).toBe(true)
+    expect(scope.get(scope.model(slow, 'slow/x', 'x').load.pending)).toBe(true)
     unmount()
     await tick(10)
     expect(aborted).toBe(true)

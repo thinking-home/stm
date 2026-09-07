@@ -37,7 +37,7 @@ export const user = model((id: string, ctx) => {
   return { load, data, status, like, title }
 })
 
-/** локальная модель: приватное состояние карточки, ключ типа из useId, начальное значение из params */
+/** локальная модель: приватное состояние карточки, адрес из useId, начальное значение из params */
 export const details = model(({ open: initial }: { open: boolean }, ctx) => {
   const toggle = event()
   const open = store(initial)

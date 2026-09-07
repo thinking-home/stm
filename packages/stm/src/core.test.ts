@@ -42,8 +42,8 @@ describe('юниты', () => {
   it('состояние живёт в scope: у каждого скоупа свой экземпляр', () => {
     const s1 = createScope({ api })
     const s2 = createScope({ api })
-    const a = s1.model(counter, 'counter', 'x')
-    const b = s2.model(counter, 'counter', 'x')
+    const a = s1.model(counter, 'counter/x', 'x')
+    const b = s2.model(counter, 'counter/x', 'x')
     s1.emit(a.inc, 2)
     s1.emit(a.inc, 3)
     expect(s1.get(a.count)).toBe(5)
@@ -69,7 +69,7 @@ describe('юниты', () => {
 
   it('подписка на стор: только при изменении, отписка работает', () => {
     const scope = createScope({ api })
-    const a = scope.model(counter, 'counter', 'x')
+    const a = scope.model(counter, 'counter/x', 'x')
     const fn = vi.fn()
     const off = scope.subscribe(a.count, fn)
     scope.emit(a.inc, 1)
@@ -212,12 +212,12 @@ describe('effect', () => {
 })
 
 describe('model', () => {
-  it('адрес = ключ типа + доменный ключ; экземпляры изолированы', () => {
+  it('экземпляры адресуются строкой и изолированы', () => {
     const scope = createScope({ api })
-    const a = scope.model(counter, 'counter', 'a')
-    const b = scope.model(counter, 'counter', 'b')
-    const other = scope.model(counter, 'other', 'a') // тот же доменный ключ под другим ключом типа
-    expect(scope.model(counter, 'counter', 'a')).toBe(a)
+    const a = scope.model(counter, 'counter/a', 'a')
+    const b = scope.model(counter, 'counter/b', 'b')
+    const other = scope.model(counter, 'other/a', 'a') // те же params под другим адресом
+    expect(scope.model(counter, 'counter/a', 'a')).toBe(a)
     expect(other).not.toBe(a)
     scope.emit(a.inc, 1)
     scope.emit(a.inc, 1)
@@ -247,47 +247,47 @@ describe('model', () => {
     expect(() => scope.model(other, 'root')).toThrow(/другого шаблона/)
   })
 
-  it('params: объект с явным ключом, действует только при создании', () => {
+  it('params действуют только при создании', () => {
     const form = model(({ initial }: { initial: string }) => ({ name: store(initial) }))
     const scope = createScope({ api })
-    const f = scope.model(form, 'form', { initial: 'Ann' }, '1')
+    const f = scope.model(form, 'form/1', { initial: 'Ann' })
     expect(scope.get(f.name)).toBe('Ann')
-    expect(scope.model(form, 'form', { initial: 'Bob' }, '1')).toBe(f) // тот же адрес — тот же экземпляр
+    expect(scope.model(form, 'form/1', { initial: 'Bob' })).toBe(f) // тот же адрес — тот же экземпляр
     expect(scope.get(f.name)).toBe('Ann')
-    expect(scope.model(form, 'form', { initial: 'Bob' })).not.toBe(f) // без ключа — другой адрес
+    expect(scope.get(scope.model(form, 'form/2', { initial: 'Bob' }).name)).toBe('Bob')
   })
 
   it('claim: один владелец, release с задержкой, повторный claim отменяет удаление', async () => {
     const scope = createScope({ api }, { unmountDelay: 5 })
-    const release = scope.claim(counter, 'counter', 'a')
-    const a = scope.model(counter, 'counter', 'a')
-    expect(() => scope.claim(counter, 'counter', 'a')).toThrow(/владелец/)
+    const release = scope.claim(counter, 'counter/a', 'a')
+    const a = scope.model(counter, 'counter/a', 'a')
+    expect(() => scope.claim(counter, 'counter/a', 'a')).toThrow(/владелец/)
     scope.emit(a.inc, 1)
 
     release()
     release() // повторный release ничего не ломает
-    const release2 = scope.claim(counter, 'counter', 'a') // успели вернуться — экземпляр тот же
+    const release2 = scope.claim(counter, 'counter/a', 'a') // успели вернуться — экземпляр тот же
     await tick(10)
-    expect(scope.model(counter, 'counter', 'a')).toBe(a)
+    expect(scope.model(counter, 'counter/a', 'a')).toBe(a)
     expect(scope.get(a.count)).toBe(1)
 
     release2()
     await tick(10)
-    const fresh = scope.model(counter, 'counter', 'a')
+    const fresh = scope.model(counter, 'counter/a', 'a')
     expect(fresh).not.toBe(a)
     expect(scope.get(fresh.count)).toBe(0)
   })
 
   it('dispose: отменяет эффекты, снимает подписки экземпляра, не пишет в scope', async () => {
     const scope = createScope({ api })
-    const a = scope.model(counter, 'counter', 'a')
-    const b = scope.model(counter, 'counter', 'b')
+    const a = scope.model(counter, 'counter/a', 'a')
+    const b = scope.model(counter, 'counter/b', 'b')
     const p = scope.run(a.load)
     const aborted = vi.fn()
     scope.subscribe(a.load.aborted, aborted)
     expect(scope.get(a.load.pending)).toBe(true)
 
-    scope.dispose('counter', 'a')
+    scope.dispose('counter/a')
     await expect(p).rejects.toThrow(/abort/i)
     expect(aborted).not.toHaveBeenCalled() // после удаления экземпляра его события не эмитятся
     scope.emit(reset) // слушатель удалённого экземпляра снят: значение в scope не появляется
@@ -296,7 +296,7 @@ describe('model', () => {
     // @ts-expect-error приватное поле
     expect(scope.values.has(a.load.pending)).toBe(false)
     expect(scope.get(b.count)).toBe(0)
-    expect(scope.model(counter, 'counter', 'a')).not.toBe(a)
+    expect(scope.model(counter, 'counter/a', 'a')).not.toBe(a)
   })
 })
 
@@ -321,7 +321,7 @@ describe('общение моделей', () => {
   it('экземпляр роутера передаётся странице через params; страница реагирует на его события', async () => {
     const scope = createScope({ api })
     const r = scope.model(router, 'router')
-    const p = scope.model(page, 'page', { id: '1', router: r }, '1')
+    const p = scope.model(page, 'page/1', { id: '1', router: r })
 
     scope.emit(r.navigate, { route: 'page', id: '2' })
     expect(scope.get(p.load.pending)).toBe(false) // чужой маршрут
@@ -331,7 +331,7 @@ describe('общение моделей', () => {
     await tick()
     expect(scope.get(p.data)).toBe('user:1')
 
-    scope.dispose('page', '1')
+    scope.dispose('page/1')
     scope.emit(r.navigate, { route: 'page', id: '1' }) // подписки страницы сняты
     expect(scope.get(p.load.pending)).toBe(false)
   })
@@ -339,25 +339,25 @@ describe('общение моделей', () => {
   it('вложенный экземпляр не сериализуется под адресом родителя', () => {
     const scope = createScope({ api })
     const r = scope.model(router, 'router')
-    scope.model(page, 'page', { id: '1', router: r }, '1')
+    scope.model(page, 'page/1', { id: '1', router: r })
     scope.emit(r.navigate, { route: 'home', id: '' })
-    expect(scope.serialize()).toEqual({ router: { '': { current: { route: 'home', id: '' } } } })
+    expect(scope.serialize()).toEqual({ router: { current: { route: 'home', id: '' } } })
   })
 })
 
 describe('serialize / state', () => {
   it('serialize отдаёт изменённые сторы по адресам и путям; эффекты и computed не попадают', async () => {
     const scope = createScope({ api })
-    const a = scope.model(counter, 'counter', 'a')
+    const a = scope.model(counter, 'counter/a', 'a')
     const root = scope.model(app, 'root')
-    scope.model(counter, 'counter', 'b') // без изменений — в JSON не попадает
+    scope.model(counter, 'counter/b', 'b') // без изменений — в JSON не попадает
     scope.emit(a.inc, 1)
     await scope.run(a.load) // pending менялся, но это стор эффекта; user изменился
     scope.emit(root.set, 'dark')
     scope.set(root.form.name, 'Ann')
     expect(scope.serialize()).toEqual({
-      counter: { a: { count: 1, user: 'user:a' } },
-      root: { '': { theme: 'dark', 'form.name': 'Ann' } },
+      'counter/a': { count: 1, user: 'user:a' },
+      root: { theme: 'dark', 'form.name': 'Ann' },
     })
   })
 
@@ -368,12 +368,12 @@ describe('serialize / state', () => {
       ctx.on(name, watched)
       return { name }
     })
-    const state = { counter: { a: { count: 5, ghost: 1 } }, form: { '': { name: 'Ann' } } }
+    const state = { 'counter/a': { count: 5, ghost: 1 }, form: { name: 'Ann' } }
     const scope = createScope({ api }, { state })
-    const a = scope.model(counter, 'counter', 'a')
+    const a = scope.model(counter, 'counter/a', 'a')
     expect(scope.get(a.count)).toBe(5)
     expect(scope.get(a.label)).toBe('a:5')
-    expect(scope.get(scope.model(counter, 'counter', 'b').count)).toBe(0)
+    expect(scope.get(scope.model(counter, 'counter/b', 'b').count)).toBe(0)
     const f = scope.model(form, 'form')
     expect(scope.get(f.name)).toBe('Ann')
     expect(watched).not.toHaveBeenCalled()

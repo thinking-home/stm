@@ -18,7 +18,7 @@ function UserTitle() {
 
 // владелец экземпляра user/id и локального экземпляра details
 function UserCard({ id }: { id: string }) {
-  const m = useCreateModel(user, 'user', id)
+  const m = useCreateModel(user, `user/${id}`, id)
   const ui = useCreateLocalModel(details, { open: false })
   const { remove } = useModel(app)
 
