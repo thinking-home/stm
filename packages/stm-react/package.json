@@ -1,21 +1,46 @@
 {
   "name": "@thinking-home/stm-react",
   "version": "0.0.1",
+  "description": "React bindings for @thinking-home/stm: hooks and providers for stores, events, effects and models",
+  "license": "MIT",
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.tsx"
   },
-  "files": [
-    "src"
-  ],
-  "dependencies": {
-    "@thinking-home/stm": "workspace:*"
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      }
+    }
   },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "state",
+    "store",
+    "react",
+    "hooks",
+    "model"
+  ],
   "peerDependencies": {
+    "@thinking-home/stm": "workspace:^",
     "react": ">=18"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",
+    "@thinking-home/stm": "workspace:*",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "react": "^19.2.8",

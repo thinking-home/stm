@@ -1,4 +1,4 @@
-# stm
+# @thinking-home/stm
 
 Минималистичный state manager для React в духе nanostores. Монорепозиторий на pnpm workspaces.
 
@@ -151,4 +151,10 @@ pnpm typecheck   # tsc -b по графу project references
 pnpm dev         # examples/app на http://localhost:5173
 ```
 
-Внутренние пакеты не собираются: `exports` указывают на `.ts` исходники, Vite и vitest читают их напрямую. Перед публикацией в npm понадобится сборка (например, tsdown) и замена `exports` на `dist`.
+В разработке `exports` пакетов указывают на `.ts` исходники, Vite и vitest читают их напрямую. При публикации pnpm подставляет `publishConfig.exports`, которые ведут в `dist`, а `workspace:` заменяет на версии.
+
+```sh
+pnpm build                                  # tsc → packages/*/dist
+pnpm -r publish --access public --dry-run   # проверить, что уйдёт в npm
+pnpm -r publish --access public             # опубликовать @thinking-home/stm и @thinking-home/stm-react
+```
