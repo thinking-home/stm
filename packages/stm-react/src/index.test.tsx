@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createScope, effect, event, model, store } from 'stm'
+import { createScope, effect, event, model, store } from '@thinking-home/stm'
 import {
   ModelProvider,
   ScopeProvider,
@@ -14,7 +14,7 @@ import {
   useStore,
 } from './index'
 
-declare module 'stm' {
+declare module '@thinking-home/stm' {
   interface Deps {
     api: { load(id: string, signal: AbortSignal): Promise<string> }
   }

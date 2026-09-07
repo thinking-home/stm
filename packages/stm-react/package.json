@@ -1,5 +1,5 @@
 {
-  "name": "stm-react",
+  "name": "@thinking-home/stm-react",
   "version": "0.0.1",
   "type": "module",
   "exports": {
@@ -9,7 +9,7 @@
     "src"
   ],
   "dependencies": {
-    "stm": "workspace:*"
+    "@thinking-home/stm": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=18"

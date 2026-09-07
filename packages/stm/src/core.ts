@@ -1,7 +1,7 @@
 /**
  * Зависимости, доступные эффектам через `ctx.deps`.
  * Расширяется через declaration merging:
- *   declare module 'stm' { interface Deps { api: Api } }
+ *   declare module '@thinking-home/stm' { interface Deps { api: Api } }
  */
 export interface Deps {}
 

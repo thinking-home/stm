@@ -4,7 +4,7 @@
 
 ```
 packages/stm          ядро: store, event, computed, effect, model, Scope
-packages/stm-react    хуки и провайдеры, зависит от stm через workspace:*
+packages/stm-react    хуки и провайдеры, зависит от @thinking-home/stm через workspace:*
 examples/app          Vite + React, чтобы проверять руками
 ```
 
@@ -19,10 +19,10 @@ examples/app          Vite + React, чтобы проверять руками
 
 ```ts
 // models.ts
-import { effect, event, model, store, type InstanceOf } from 'stm'
+import { effect, event, model, store, type InstanceOf } from '@thinking-home/stm'
 
 // зависимости, доступные эффектам
-declare module 'stm' {
+declare module '@thinking-home/stm' {
   interface Deps { api: { items(signal: AbortSignal): Promise<Item[]> } }
 }
 
@@ -60,8 +60,8 @@ export const item = model(({ id, root }: { id: string; root: InstanceOf<typeof a
 ```tsx
 // main.tsx
 import { createRoot } from 'react-dom/client'
-import { createScope } from 'stm'
-import { ModelProvider, ScopeProvider } from 'stm-react'
+import { createScope } from '@thinking-home/stm'
+import { ModelProvider, ScopeProvider } from '@thinking-home/stm-react'
 
 const scope = createScope({ api })
 const root = scope.model(app, 'root')   // адрес 'root', владелец не нужен: живёт вместе со скоупом
@@ -80,7 +80,7 @@ createRoot(document.getElementById('root')!).render(
 
 ```tsx
 // List.tsx
-import { ModelProvider, useCreateLocalModel, useEvent, useModel, useStore } from 'stm-react'
+import { ModelProvider, useCreateLocalModel, useEvent, useModel, useStore } from '@thinking-home/stm-react'
 
 function List() {
   const { items } = useModel(app)                     // корневой экземпляр из провайдера

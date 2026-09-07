@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { ModelProvider, useCreateLocalModel, useCreateModel, useEvent, useModel, useRun, useStore } from 'stm-react'
+import { ModelProvider, useCreateLocalModel, useCreateModel, useEvent, useModel, useRun, useStore } from '@thinking-home/stm-react'
 import { app, details, user } from './models'
 
 // потребитель: экземпляр user пришёл из провайдера владельца

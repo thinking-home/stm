@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createScope } from 'stm'
-import { ScopeProvider } from 'stm-react'
+import { createScope } from '@thinking-home/stm'
+import { ScopeProvider } from '@thinking-home/stm-react'
 import { api } from './api'
 import { App } from './App'
 

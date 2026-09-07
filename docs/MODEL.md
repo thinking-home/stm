@@ -9,7 +9,7 @@
 ### Объявить шаблон
 
 ```ts
-import { computed, effect, event, model, store } from 'stm'
+import { computed, effect, event, model, store } from '@thinking-home/stm'
 
 export const user = model((id: string, ctx) => {
   const load = effect((_: void, { deps, signal }) => deps.api.user(id, signal))
@@ -78,7 +78,7 @@ const form = model(({ initial }: { initial: Draft }, ctx) => {
 Экземпляр создаёт ровно один компонент, владелец. Он же отдаёт экземпляр вниз провайдером, а потребители забирают его хуком `useModel`.
 
 ```tsx
-import { ModelProvider, useCreateLocalModel, useCreateModel, useEvent, useModel, useRun, useStore } from 'stm-react'
+import { ModelProvider, useCreateLocalModel, useCreateModel, useEvent, useModel, useRun, useStore } from '@thinking-home/stm-react'
 
 function UserTitle() {                                  // потребитель
   const { title } = useModel(user)

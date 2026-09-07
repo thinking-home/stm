@@ -1,7 +1,7 @@
-import { computed, effect, event, model, store } from 'stm'
+import { computed, effect, event, model, store } from '@thinking-home/stm'
 import type { Api, User } from './api'
 
-declare module 'stm' {
+declare module '@thinking-home/stm' {
   interface Deps {
     api: Api
   }
