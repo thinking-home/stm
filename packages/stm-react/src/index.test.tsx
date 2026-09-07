@@ -23,17 +23,20 @@ declare module 'stm' {
 const api = { load: async (id: string) => `user:${id}` }
 const tick = (ms = 0) => new Promise(r => setTimeout(r, ms))
 
-const counter = model((id: string) => {
+const counter = model((id: string, ctx) => {
   const inc = event()
-  const count = store(0).on(inc, s => s + 1)
+  const count = store(0)
   const load = effect((_: void, { deps, signal }) => deps.api.load(id, signal))
-  const user = store('').on(load.done, (_, { result }) => result)
+  const user = store('')
+  ctx.on(inc, () => ctx.set(count, ctx.get(count) + 1))
+  ctx.on(load.done, ({ result }) => ctx.set(user, result))
   return { inc, count, load, user }
 })
 
-const toggle = model(() => {
+const toggle = model(({ initial }: { initial: boolean }, ctx) => {
   const flip = event()
-  const on = store(false).on(flip, v => !v)
+  const on = store(initial)
+  ctx.on(flip, () => ctx.set(on, !ctx.get(on)))
   return { flip, on }
 })
 
@@ -55,10 +58,10 @@ function Counter() {
   )
 }
 
-// владелец: создаёт экземпляр counter/id и локальный экземпляр toggle
+// владелец: создаёт экземпляр counter/id и локальный экземпляр toggle с params
 function Card({ id }: { id: string }) {
   const m = useCreateModel(counter, 'counter', id)
-  const ui = useCreateLocalModel(toggle)
+  const ui = useCreateLocalModel(toggle, { initial: false })
   const on = useStore(ui.on)
   const flip = useEvent(ui.flip)
   return (

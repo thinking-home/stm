@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import type { Effect, Event, Model, Params, Readable, Scope } from 'stm'
+import type { Effect, Event, Key, Model, Params, Readable, Scope } from 'stm'
 
 const ScopeCtx = createContext<Scope | null>(null)
 
@@ -40,16 +40,21 @@ export function useRun<P, R>(fx: Effect<P, R>): (...args: RunArgs<P>) => Promise
 }
 
 /** создаёт экземпляр по адресу «ключ типа + доменный ключ» и владеет им, пока компонент смонтирован */
-export function useCreateModel<K, T extends object>(model: Model<K, T>, type: string, ...key: Params<K>): T {
+export function useCreateModel<P, T extends object>(
+  model: Model<P, T>,
+  type: string,
+  ...args: [...Params<P>, key?: Key]
+): T {
   const scope = useScope()
-  const inst = scope.model(model, type, ...key)
-  useEffect(() => scope.claim(model, type, ...key), [scope, model, type, key[0]])
+  const inst = scope.model(model, type, ...args)
+  // экземпляр меняется только вместе с адресом, поэтому params в зависимостях не нужны
+  useEffect(() => scope.claim(model, type, ...args), [scope, model, type, inst])
   return inst
 }
 
 /** то же, но ключ типа берётся из useId: приватный экземпляр этого компонента */
-export function useCreateLocalModel<K, T extends object>(model: Model<K, T>, ...key: Params<K>): T {
-  return useCreateModel(model, useId(), ...key)
+export function useCreateLocalModel<P, T extends object>(model: Model<P, T>, ...params: Params<P>): T {
+  return useCreateModel(model, useId(), ...params)
 }
 
 const ModelCtx = createContext<ReadonlyMap<Model<any, any>, object>>(new Map())
